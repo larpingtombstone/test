@@ -59,7 +59,7 @@ function Set-RegKey {
     $null = Set-ItemProperty -Path $RegPath -Name $RegName -Value $RegVal -Type $RegType -Force
 }
 
-# Download file with progress
+# Download file with browser-like user-agent (helps with Cloudflare)
 function Get-AppFile {
     param(
         [string]$Uri,
@@ -69,7 +69,11 @@ function Get-AppFile {
     Write-Step "Downloading $Label..."
     Write-Host "     $Uri" -ForegroundColor DarkGray
     try {
-        Invoke-WebRequest -Uri $Uri -OutFile $OutFile -UseBasicParsing -ErrorAction Stop
+        # Use a realistic browser user-agent to bypass some Cloudflare checks
+        $headers = @{
+            "User-Agent" = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        Invoke-WebRequest -Uri $Uri -OutFile $OutFile -UseBasicParsing -Headers $headers -ErrorAction Stop
         Write-OK "$Label downloaded"
         return $true
     }
@@ -168,15 +172,11 @@ $null = New-Item -ItemType Directory -Path $TempDir -Force
 # ============================================================================
 Write-Banner "[0/8] DOWNLOADING AND INSTALLING APPLICATIONS"
 
-# Discord
+# Discord (always re-download to ensure valid binary)
 $discordExe = Join-Path $TempDir "DiscordSetup.exe"
-if (Test-Path $discordExe) {
-    Write-Warn "Discord already cached -- skipping download"
-    $ok = $true
-} else {
-    $discordUrl = "https://discord.com/api/downloads/distributions/app/installers/latest?channel=stable&platform=win&arch=x64"
-    $ok = Get-AppFile -Uri $discordUrl -OutFile $discordExe -Label "Discord"
-}
+if (Test-Path $discordExe) { Remove-Item $discordExe -Force }
+$discordUrl = "https://discord.com/api/downloads/distributions/app/installers/latest?channel=stable&platform=win&arch=x64"
+$ok = Get-AppFile -Uri $discordUrl -OutFile $discordExe -Label "Discord"
 if ($ok) { Start-Installer -FilePath $discordExe -Arguments @("--silent") -Label "Discord" }
 
 # Steam
@@ -189,23 +189,31 @@ if (Test-Path $steamExe) {
 }
 if ($ok) { Start-Installer -FilePath $steamExe -Arguments @("/S") -Label "Steam" }
 
-# LLaunch
+# LLaunch (may be behind Cloudflare, so skip on failure)
 $llExe = Join-Path $TempDir "LLaunchSetup.exe"
 if (Test-Path $llExe) {
     Write-Warn "LLaunch already cached -- skipping download"
     $ok = $true
 } else {
+    Write-Step "Attempting LLaunch download (may fail due to Cloudflare)..."
     $ok = Get-AppFile -Uri "https://dl.llaun.ch/legacy/installer" -OutFile $llExe -Label "LLaunch"
+    if (-not $ok) {
+        Write-Warn "LLaunch download blocked by Cloudflare -- skipping (install manually from https://llaunch.io)"
+    }
 }
 if ($ok) { Start-Installer -FilePath $llExe -Arguments @("/silent") -Label "LLaunch" }
 
-# Zalo
+# Zalo (may redirect; try direct download)
 $zaloExe = Join-Path $TempDir "ZaloSetup.exe"
 if (Test-Path $zaloExe) {
     Write-Warn "Zalo already cached -- skipping download"
     $ok = $true
 } else {
+    Write-Step "Attempting Zalo download..."
     $ok = Get-AppFile -Uri "https://zalo.me/download/zalo-pc?utm=90000" -OutFile $zaloExe -Label "Zalo"
+    if (-not $ok) {
+        Write-Warn "Zalo download failed -- skipping (install manually from https://zalo.me)"
+    }
 }
 if ($ok) { Start-Installer -FilePath $zaloExe -Arguments @("/silent") -Label "Zalo" }
 
